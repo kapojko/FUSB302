@@ -12,9 +12,9 @@ extern "C" {
 #define FUSB302_I2C_ADDR 0x22
 
 // Register addresses
+#define FUSB302_REG_ALL (-1)
 
 // Control registers
-#define FUSB302_REG_CONTROL_ALL (-1)
 #define FUSB302_REG_CONTROL_START 0x01
 #define FUSB302_REG_CONTROL_NUM 16
 
@@ -27,7 +27,7 @@ extern "C" {
 #define FUSB302_REG_CONTROL1 0x07
 #define FUSB302_REG_CONTROL2 0x08
 #define FUSB302_REG_CONTROL3 0x09
-#define FUSB302_REG_MASK1 0x0A
+#define FUSB302_REG_MASK 0x0A
 #define FUSB302_REG_POWER 0x0B
 #define FUSB302_REG_RESET 0x0C
 #define FUSB302_REG_OCREG 0x0D
@@ -36,7 +36,6 @@ extern "C" {
 #define FUSB302_REG_CONTROL4 0x10
 
 // Status registers
-#define FUSB302_REG_STATUS_ALL (-1)
 #define FUSB302_REG_STATUS_START 0x3C
 #define FUSB302_REG_STATUS_NUM 7
 
@@ -79,7 +78,7 @@ extern "C" {
 #define FUSB302_TXCC1 (1 << 0)
 
 // FUSB302_REG_MEASURE, all R/W
-#define FUSB302_MEASURE_VBUS (1 << 6)
+#define FUSB302_MEAS_VBUS (1 << 6)
 
 #define FUSB302_MDAC_BITS (0x3F)
 #define FUSB302_MDAC_OFFSET 0
@@ -163,7 +162,7 @@ extern "C" {
 #define FUSB302_M_COLLISION (1 << 1)
 #define FUSB302_M_BC_LVL (1 << 0)
 
-// FUSB302_REG_PWR, all R/W
+// FUSB302_REG_POWER, all R/W
 #define FUSB302_PWR_INT_OSC (1 << 3)
 #define FUSB302_PWR_MEAS_BLOCK (1 << 2)
 #define FUSB302_PWR_RECV_CUR (1 << 1)
@@ -277,18 +276,8 @@ extern "C" {
 #define FUSB302_TX_RX_TOKEN_BITS 0xFF
 #define FUSB302_TX_RX_TOKEN_OFFSET 0
 
-#define FUSB302_GET_BIT(regData, bitMask) ((regData) & (bitMask))
-#define FUSB302_SET_BIT(regData, bitMask, value)                                                   \
-    ((regData) = ((regData) & ~(bitMask)) | ((value) ? (bitMask) : 0))
-
-#define FUSB302_GET_BITS(regData, bitMask, offset) (((regData) & (bitMask)) >> (offset))
-#define FUSB302_SET_BITS(regData, bitMask, offset, value)                                          \
-    ((regData) = ((regData) & ~(bitMask)) | ((value) << (offset)))
-
-#define FUSB302_CONTROL_REG_DATA(controlData, reg)                                                 \
-    ((controlData)->regData[reg - FUSB302_REG_CONTROL_START])
-#define FUSB302_STATUS_REG_DATA(statusData, reg)                                                   \
-    ((statusData)->regData[reg - FUSB302_REG_STATUS_START])
+// Data value access
+#define FUSB302_OFFSET_NONE (-1)
 
 typedef enum FUSG302_ToggleMode {
     FUSB302_TOGGLE_MODE_MANUAL,
@@ -313,29 +302,26 @@ typedef struct FUSB302_Platform {
     void (*debugPrint)(const char *fmt, ...);
 } FUSB302_Platform_t;
 
-typedef struct FUSB302_ControlData {
-    uint8_t regData[FUSB302_REG_CONTROL_NUM];
-} FUSB302_ControlData_t;
+typedef struct FUSB302_Data {
+    uint8_t controlRegData[FUSB302_REG_CONTROL_NUM];
+    uint8_t statusRegData[FUSB302_REG_STATUS_NUM];
+} FUSB302_Data_t;
 
-typedef struct FUSB302_StatusData {
-    uint8_t regData[FUSB302_REG_STATUS_NUM];
-} FUSB302_StatusData_t;
+bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
+bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
-bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_ControlData_t *controlData,
-                             int reg);
-bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_ControlData_t *controlData,
-                              int reg);
-
-bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_StatusData_t *statusData,
-                            int reg);
+bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
 bool FUSB302_ReadFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);
 bool FUSB302_WriteFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);
 
-bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_ToggleMode_t mode);
-bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_ToggleResult_t *result);
+int FUSB302_GetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset);
+void FUSB302_SetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset, int value);
 
-bool FUSB302_Reset(FUSB302_Platform_t *platform);
+bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data, FUSB302_ToggleMode_t mode);
+bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data, FUSB302_ToggleResult_t *result);
+
+bool FUSB302_Reset(FUSB302_Platform_t *platform, FUSB302_Data_t *data);
 
 #ifdef __cplusplus
 }
