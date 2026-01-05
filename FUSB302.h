@@ -276,15 +276,18 @@ extern "C" {
 #define FUSB302_TX_RX_TOKEN_BITS 0xFF
 #define FUSB302_TX_RX_TOKEN_OFFSET 0
 
-// Data value access
-#define FUSB302_OFFSET_NONE (-1)
-
-typedef enum FUSG302_ToggleMode {
+typedef enum FUSB302_ToggleMode {
     FUSB302_TOGGLE_MODE_MANUAL,
     FUSB302_TOGGLE_MODE_DRP,
     FUSB302_TOGGLE_MODE_SNK,
     FUSB302_TOGGLE_MODE_SRC
 } FUSB302_ToggleMode_t;
+
+typedef enum FUSB302_HostCurrentMode {
+    FUSB302_HOST_CURRENT_MODE_500MA,
+    FUSB302_HOST_CURRENT_MODE_1_5A,
+    FUSB302_HOST_CURRENT_MODE_3A
+} FUSB302_HostCurrentMode_t;
 
 typedef enum FUSB302_ToggleResult {
     FUSB302_TOGGLE_RESULT_NONE,
@@ -315,11 +318,18 @@ bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, 
 bool FUSB302_ReadFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);
 bool FUSB302_WriteFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);
 
+uint8_t *FUSB302_GetRegPtr(FUSB302_Data_t *data, int reg);
+
+int FUSB302_GetDataBit(FUSB302_Data_t *data, int reg, int bitMask);
+void FUSB302_SetDataBit(FUSB302_Data_t *data, int reg, int bitMask, int value);
+
 int FUSB302_GetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset);
 void FUSB302_SetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset, int value);
 
-bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data, FUSB302_ToggleMode_t mode);
-bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data, FUSB302_ToggleResult_t *result);
+bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                           FUSB302_ToggleMode_t mode, FUSB302_HostCurrentMode_t hostCurrentMode);
+bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                             FUSB302_ToggleResult_t *result);
 
 bool FUSB302_Reset(FUSB302_Platform_t *platform, FUSB302_Data_t *data);
 
