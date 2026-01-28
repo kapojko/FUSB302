@@ -40,6 +40,20 @@ bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data
     return true;
 }
 
+void FUSB302_DebugPrintControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
+    platform->debugPrint("FUSB302 Control:");
+
+    if (reg != FUSB302_REG_ALL) {
+        platform->debugPrint(" %02XH=0x%02X", reg, data->controlRegData[reg - FUSB302_REG_CONTROL_START]);
+    } else {
+        for (int i = FUSB302_REG_CONTROL_START; i < FUSB302_REG_CONTROL_START + FUSB302_REG_CONTROL_NUM; i++) {
+            platform->debugPrint(" %02XH=0x%02X", i, data->controlRegData[i - FUSB302_REG_CONTROL_START]);
+        }
+    }
+
+    platform->debugPrint("\r\n");
+}
+
 bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
     int ret;
     if (reg != FUSB302_REG_ALL) {
@@ -56,6 +70,20 @@ bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, 
     }
 
     return true;
+}
+
+void FUSB302_DebugPrintStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
+    platform->debugPrint("FUSB302 Status:");
+
+    if (reg != FUSB302_REG_ALL) {
+        platform->debugPrint(" %02XH=0x%02X", reg, data->statusRegData[reg - FUSB302_REG_STATUS_START]);
+    } else {
+        for (int i = FUSB302_REG_STATUS_START; i < FUSB302_REG_STATUS_START + FUSB302_REG_STATUS_NUM; i++) {
+            platform->debugPrint(" %02XH=0x%02X", i, data->statusRegData[i - FUSB302_REG_STATUS_START]);
+        }
+    }
+
+    platform->debugPrint("\r\n");
 }
 
 bool FUSB302_ReadFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length) {
@@ -132,6 +160,11 @@ bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     }
 
     if (mode != FUSB302_TOGGLE_MODE_MANUAL) {
+        // Read status data to clear interrupt
+        if (!FUSB302_ReadStatusData(platform, data, FUSB302_REG_ALL)) {
+            return false;
+        }
+
         // Configure toggle mode
         int modeValue;
         switch (mode) {
@@ -193,6 +226,14 @@ bool FUSB302_SetToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
         FUSB302_SetDataValue(data, FUSB302_REG_MASKA, 0xFF, 0, ~FUSB302_M_TOGDONE);
         // Maskb Register = 0x01
         FUSB302_SetDataBit(data, FUSB302_REG_MASKB, FUSB302_M_GCRCSENT, 1);
+
+        // TODO: check
+        // Set Rd only for TOGGLE
+        FUSB302_SetDataBit(data, FUSB302_REG_CONTROL2, FUSB302_TOG_RD_ONLY, 1);
+
+        // TODO: check
+        // Enable host interrupts (INT_MASK=0)
+        FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_INT_MASK, 0);
     } else {
         // Reset toggle mode (TOGGLE=0)
         FUSB302_SetDataBit(data, FUSB302_REG_CONTROL2, FUSB302_TOGGLE, 0);
@@ -215,7 +256,14 @@ bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
 
     // Check interrupt status
     int i_togdone = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPTA, FUSB302_I_TOGDONE);
-    // int i_bclvl = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_BC_LVL);
+    int i_bclvl = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_BC_LVL);
+
+    if (i_togdone) {
+        platform->debugPrint("FUSB302: Toggle done\r\n");
+    }
+    if (i_bclvl) {
+        platform->debugPrint("FUSB302: BC level\r\n");
+    }
 
     if (!i_togdone) {
         *result = FUSB302_TOGGLE_RESULT_NONE;
@@ -246,6 +294,159 @@ bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
         break;
     default:
         return false;
+    }
+
+    return true;
+}
+
+bool FUSB302_StartHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                                 FUSB302_HostCurrentMode_t hostCurrentMode,
+                                 FUSB302_HostMonitoring_t *monitoring) {
+    // Read control data
+    if (!FUSB302_ReadControlData(platform, data, FUSB302_REG_ALL)) {
+        return false;
+    }
+
+    // Enable host pullups
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+
+    // Setup current CC to measure
+    monitoring->ccCur = 1;
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+
+    // Disable host powerdowns
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+
+    // Setup comparator to measure CC
+    FUSB302_SetDataBit(data, FUSB302_REG_MEASURE, FUSB302_MEAS_VBUS, 0);
+
+    // Setup Measure Block DAC data input
+    if (hostCurrentMode != FUSB302_HOST_CURRENT_MODE_3A) {
+        // 6'b10_0101 (1.6 V)
+        uint8_t mdacValue = 0b100101;
+        FUSB302_SetDataValue(data, FUSB302_REG_MEASURE, FUSB302_MDAC_BITS, FUSB302_MDAC_OFFSET,
+                             mdacValue);
+    } else {
+        // 6'b11_1101 (2.6 V)
+        uint8_t mdacValue = 0b111101;
+        FUSB302_SetDataValue(data, FUSB302_REG_MEASURE, FUSB302_MDAC_BITS, FUSB302_MDAC_OFFSET,
+                             mdacValue);
+    }
+
+    // Enable interrupts to host
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_INT_MASK, 0);
+
+    // Setup host current
+    int hostCurValue;
+    switch (hostCurrentMode) {
+    case FUSB302_HOST_CURRENT_MODE_500MA:
+        hostCurValue = FUSB302_HOST_CUR_DEF_USB;
+        break;
+    case FUSB302_HOST_CURRENT_MODE_1_5A:
+        hostCurValue = FUSB302_HOST_CUR_1_5A;
+        break;
+    case FUSB302_HOST_CURRENT_MODE_3A:
+        hostCurValue = FUSB302_HOST_CUR_3A;
+        break;
+    default:
+        hostCurValue = FUSB302_HOST_CUR_DEF_USB;
+        break;
+    }
+
+    FUSB302_SetDataValue(data, FUSB302_REG_CONTROL0, FUSB302_HOST_CUR_BITS, FUSB302_HOST_CUR_OFFSET,
+                         hostCurValue);
+
+    // Mask all interupts except M_COMP_CHNG
+    FUSB302_SetDataValue(data, FUSB302_REG_MASK, 0xFF, 0, ~FUSB302_M_COMP_CHNG);
+    FUSB302_SetDataValue(data, FUSB302_REG_MASKA, 0xFF, 0, 0xFF);
+    FUSB302_SetDataBit(data, FUSB302_REG_MASKB, FUSB302_M_GCRCSENT, 1);
+
+    // Setup power
+    FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_MEAS_BLOCK, 1);
+    FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_RECV_CUR, 1);
+    FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_BANDGAP_WAKE, 1);
+
+    // Write control registers
+    if (!FUSB302_WriteControlData(platform, data, FUSB302_REG_ALL)) {
+        return false;
+    }
+
+    // Set initial monitoring state
+    monitoring->state = FUSB302_HOST_STATE_DEVICE_INIT;
+
+    return true;
+}
+
+bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                                  FUSB302_HostMonitoring_t *monitoring) {
+    // Read status data
+    if (!FUSB302_ReadStatusData(platform, data, FUSB302_REG_ALL)) {
+        return false;
+    }
+
+    if (monitoring->state == FUSB302_HOST_STATE_DEVICE_INIT) {
+        // Initialization
+
+        // Check COMP value
+        uint8_t comp = FUSB302_GetDataBit(data, FUSB302_REG_STATUS0, FUSB302_COMP);
+        if (comp) {
+            // 1: Measured CC* input is higher than reference level driven from the MDAC.
+
+            monitoring->state = FUSB302_HOST_STATE_DEVICE_DETACHED;
+            platform->debugPrint("FUSB302: Device detached\r\n");
+        } else {
+            // 0: Measured CC* input is lower than reference level driven from the MDAC.
+
+            if (monitoring->ccCur == 1) {
+                monitoring->state = FUSB302_HOST_STATE_DEVICE_ATTACHED_CC1;
+                platform->debugPrint("FUSB302: Device attached (CC1)\r\n");
+            } else {
+                monitoring->state = FUSB302_HOST_STATE_DEVICE_ATTACHED_CC2;
+                platform->debugPrint("FUSB302: Device attached (CC2)\r\n");
+            }
+        }
+    } else if (monitoring->state == FUSB302_HOST_STATE_DEVICE_DETACHED) {
+        // Device detached, monitoring
+
+        // Check COMP interrupt
+        uint8_t i_comp_chng = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_COMP_CHNG);
+        if (i_comp_chng) {
+            // 1: A change in the value of COMP has occurred. Indicates selected CC
+            // line has tripped a threshold programmed into the MDAC
+
+            if (monitoring->ccCur == 1) {
+                monitoring->state = FUSB302_HOST_STATE_DEVICE_ATTACHED_CC1;
+                platform->debugPrint("FUSB302: Device attached (CC1)\r\n");
+            } else {
+                monitoring->state = FUSB302_HOST_STATE_DEVICE_ATTACHED_CC2;
+                platform->debugPrint("FUSB302: Device attached (CC2)\r\n");
+            }
+        } else {
+            // switch CC line
+            if (monitoring->ccCur == 1) {
+                monitoring->ccCur = 2;
+                FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
+                FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
+            } else {
+                monitoring->ccCur = 1;
+                FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+                FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+            }
+        }
+    } else {
+        // Device detached, monitoring
+
+        // Check COMP interrupt
+        uint8_t i_comp_chng = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_COMP_CHNG);
+        if (i_comp_chng) {
+            // 1: A change in the value of COMP has occurred. Indicates selected CC
+            // line has tripped a threshold programmed into the MDAC
+            monitoring->state = FUSB302_HOST_STATE_DEVICE_DETACHED;
+            platform->debugPrint("FUSB302: Device detached\r\n");
+        }
     }
 
     return true;
