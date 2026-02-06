@@ -306,13 +306,15 @@ typedef enum FUSB302_HostState {
 
 typedef enum FUSB302_CC_Orientation {
     FUSB302_CC_ORIENTATION_CC1,
-    FUSB302_CC_ORIENTATION_CC2
+    FUSB302_CC_ORIENTATION_CC2,
+    FUSB302_CC_ORIENTATION_UNKNOWN,
 } FUSB302_CC_Orientation_t;
 
 typedef struct FUSB302_Platform {
     int (*i2cWriteReg)(uint8_t addr7bit, uint8_t regNum, const uint8_t *data, uint8_t length,
                        uint8_t wait);
     int (*i2cReadReg)(uint8_t addr7bit, uint8_t regNum, uint8_t *data, uint8_t length, int timeout);
+    void (*delayUs)(uint32_t us);
     void (*debugPrint)(const char *fmt, ...);
 } FUSB302_Platform_t;
 

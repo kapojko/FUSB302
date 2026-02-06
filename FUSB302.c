@@ -313,7 +313,7 @@ bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *d
         return false;
     }
 
-    // Enable host pullups
+    // Enable host pullups (note: both pullups seem to be internally connected ~300R)
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
 
@@ -412,14 +412,62 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
 
             monitoring->state = FUSB302_HOST_STATE_DEVICE_ATTACHED;
 
-            // Check BC_LVL
-            uint8_t bc_lvl = FUSB302_GetDataValue(data, FUSB302_REG_STATUS0, FUSB302_BC_LVL_BITS,
-                                                  FUSB302_BC_LVL_OFFSET);
-            if (bc_lvl == FUSB302_BC_LVL_0_200MV) {
-                // Another CC line triggered
+            bool ok = true;
+
+            // Set switches for CC1 measure only (no pull-up for CC2 since pull-ups are connected)
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
+
+            platform->delayUs(1000);
+
+            // Read BC_LVL for CC1
+            ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS0);
+            uint8_t bc_lvl_cc1 = FUSB302_GetDataValue(data, FUSB302_REG_STATUS0, FUSB302_BC_LVL_BITS,
+                                                      FUSB302_BC_LVL_OFFSET);
+
+            // Set switches for CC2 measure only (no pull-up for CC1 since pull-ups are connected)
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
+            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
+
+            platform->delayUs(1000);
+
+            // Read BC_LVL for CC2
+            ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS0);
+            uint8_t bc_lvl_cc2 = FUSB302_GetDataValue(data, FUSB302_REG_STATUS0, FUSB302_BC_LVL_BITS,
+                                                      FUSB302_BC_LVL_OFFSET);
+
+            // Restore switches configuration
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
+
+            platform->delayUs(1000);
+
+            // Read interrupt status register to clear interrupts
+            ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
+
+            // Check error
+            if (!ok) {
+                return false;
+            }
+
+            // platform->debugPrint("FUSB302 device attached: COMP=%d bc_lvl_cc1=%d bc_lvl_cc2=%d\r\n", comp, bc_lvl_cc1, bc_lvl_cc2);
+
+            // Determine CC level
+            if (bc_lvl_cc1 == FUSB302_BC_LVL_1230MV_MORE && bc_lvl_cc2 != FUSB302_BC_LVL_1230MV_MORE) {
                 monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC2;
-            } else {
+            } else if (bc_lvl_cc2 == FUSB302_BC_LVL_1230MV_MORE && bc_lvl_cc1 != FUSB302_BC_LVL_1230MV_MORE) {
                 monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC1;
+            } else {
+                monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
             }
         }
     }
