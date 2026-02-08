@@ -282,22 +282,6 @@ typedef enum FUSB302_HostCurrentMode {
     FUSB302_HOST_CURRENT_MODE_3A
 } FUSB302_HostCurrentMode_t;
 
-typedef enum FUSB302_ToggleMode {
-    FUSB302_TOGGLE_MODE_MANUAL,
-    FUSB302_TOGGLE_MODE_DRP,
-    FUSB302_TOGGLE_MODE_SNK,
-    FUSB302_TOGGLE_MODE_SRC
-} FUSB302_ToggleMode_t;
-
-typedef enum FUSB302_ToggleResult {
-    FUSB302_TOGGLE_RESULT_NONE,
-    FUSB302_TOGGLE_RESULT_SRC_CC1,
-    FUSB302_TOGGLE_RESULT_SRC_CC2,
-    FUSB302_TOGGLE_RESULT_SNK_CC1,
-    FUSB302_TOGGLE_RESULT_SNK_CC2,
-    FUSB302_TOGGLE_RESULT_AUDIO
-} FUSB302_ToggleResult_t;
-
 typedef enum FUSB302_HostState {
     FUSB302_HOST_STATE_INIT,
     FUSB302_HOST_STATE_DEVICE_DETACHED,
@@ -323,12 +307,6 @@ typedef struct FUSB302_Data {
     uint8_t statusRegData[FUSB302_REG_STATUS_NUM];
 } FUSB302_Data_t;
 
-typedef struct FUSB302_HostMonitoring {
-    FUSB302_HostState_t state;
-    FUSB302_HostCurrentMode_t hostCurrentMode;
-    FUSB302_CC_Orientation_t ccOrientation;
-} FUSB302_HostMonitoring_t;
-
 bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 void FUSB302_DebugPrintControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
@@ -346,17 +324,6 @@ void FUSB302_SetDataBit(FUSB302_Data_t *data, int reg, int bitMask, int value);
 
 int FUSB302_GetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset);
 void FUSB302_SetDataValue(FUSB302_Data_t *data, int reg, int bitMask, int offset, int value);
-
-bool FUSB302_SetupToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                           FUSB302_ToggleMode_t mode, FUSB302_HostCurrentMode_t hostCurrentMode);
-bool FUSB302_GetToggleResult(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                             FUSB302_ToggleResult_t *result);
-
-bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                 FUSB302_HostCurrentMode_t hostCurrentMode,
-                                 FUSB302_HostMonitoring_t *monitoring);
-bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                  FUSB302_HostMonitoring_t *monitoring);
 
 bool FUSB302_Reset(FUSB302_Platform_t *platform, FUSB302_Data_t *data);
 
