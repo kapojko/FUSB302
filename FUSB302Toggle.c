@@ -2,6 +2,13 @@
 
 bool FUSB302_SetupToggleMode(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
                              FUSB302_ToggleMode_t mode, FUSB302_HostCurrentMode_t hostCurrentMode) {
+    // Reset FUSB302
+    if (!FUSB302_Reset(platform, data)) {
+        return false;
+    }
+
+    platform->delayUs(1000);
+
     // Read control data
     if (!FUSB302_ReadControlData(platform, data, FUSB302_REG_ALL)) {
         return false;

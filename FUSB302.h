@@ -8,6 +8,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+// #define FUSB302_DEBUG
+
 // I2C address
 #define FUSB302_I2C_ADDR 0x22
 
@@ -282,17 +284,21 @@ typedef enum FUSB302_HostCurrentMode {
     FUSB302_HOST_CURRENT_MODE_3A
 } FUSB302_HostCurrentMode_t;
 
-typedef enum FUSB302_HostState {
-    FUSB302_HOST_STATE_INIT,
-    FUSB302_HOST_STATE_DEVICE_DETACHED,
-    FUSB302_HOST_STATE_DEVICE_ATTACHED
-} FUSB302_HostState_t;
-
 typedef enum FUSB302_CC_Orientation {
     FUSB302_CC_ORIENTATION_CC1,
     FUSB302_CC_ORIENTATION_CC2,
     FUSB302_CC_ORIENTATION_UNKNOWN,
 } FUSB302_CC_Orientation_t;
+
+typedef enum FUSB302_AttachedType {
+    FUSB302_ATTACHED_TYPE_NONE,
+    FUSB302_ATTACHED_TYPE_DEVICE,
+    FUSB302_ATTACHED_TYPE_HOST_500MA,
+    FUSB302_ATTACHED_TYPE_HOST_1_5A,
+    FUSB302_ATTACHED_TYPE_HOST_3A,
+    FUSB302_ATTACHED_TYPE_CABLE,
+    FUSB302_ATTACHED_TYPE_UNKNOWN
+} FUSB302_AttachedType_t;
 
 typedef struct FUSB302_Platform {
     int (*i2cWriteReg)(uint8_t addr7bit, uint8_t regNum, const uint8_t *data, uint8_t length,
