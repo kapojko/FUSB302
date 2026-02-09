@@ -1,5 +1,6 @@
+#include "FUSB302.h"
 #include "FUSB302Host.h"
-#include "FUSB302/FUSB302.h"
+#include "FUSB302PD.h"
 
 static bool DiscoverAttachment(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
                                FUSB302_HostCurrentMode_t hostCurrentMode,
@@ -112,171 +113,6 @@ static bool DiscoverAttachment(FUSB302_Platform_t *platform, FUSB302_Data_t *dat
 #endif
 
     return true;
-}
-
-static bool SendDiscoverIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                 uint8_t *txBuffer, int txBufferSize) {
-    // Build Discover Identity message for cable (SOP')
-
-    uint8_t txLen = 0;
-
-    // SOP' token sequence for cable communication
-    txBuffer[txLen++] = FUSB302_TOKEN_SOP1; // SOP1
-    txBuffer[txLen++] = FUSB302_TOKEN_SOP1; // SOP1
-    txBuffer[txLen++] = FUSB302_TOKEN_SOP3; // SOP3
-    txBuffer[txLen++] = FUSB302_TOKEN_SOP3; // SOP3
-
-    // PACKSYM token with 2 bytes (header only, no data objects for Discover Identity)
-    // PACKSYM encoding: 0x80 | number_of_bytes (N must be 2-30)
-    txBuffer[txLen++] = FUSB302_TOKEN_PACKSYM | 0x06;
-
-    // PD Header: Message Type 1 (Discover Identity), Port Data Role=Source(1), Port Power
-    txBuffer[txLen++] = 0x6F; // Corrected: DataRole=1 (DFP/Source)
-    txBuffer[txLen++] = 0x11; // Corrected: NumDataObj=1, PowerRole=1 (Source)
-
-    // VDM Header (little-endian):
-    txBuffer[txLen++] = 0x01; // Command = 1 (Discover Identity)
-    txBuffer[txLen++] = 0x80; // VDMType=1, Version=0, ObjPos=0, CmdType=0
-    txBuffer[txLen++] = 0x00; // SVID low byte
-    txBuffer[txLen++] = 0xFF; // SVID high byte
-
-    // JAM_CRC token - hardware will calculate and insert CRC
-    txBuffer[txLen++] = FUSB302_TOKEN_JAM_CRC;
-
-    // EOP token
-    txBuffer[txLen++] = FUSB302_TOKEN_EOP;
-
-    // TXOFF token - turn off transmitter after EOP
-    txBuffer[txLen++] = FUSB302_TOKEN_TXOFF;
-
-    // TXON token - start transmitter (MUST be last!)
-    // Per datasheet: "It is preferred that the TxFIFO is first written with data
-    // and then TXON or TX_START is executed."
-    txBuffer[txLen++] = FUSB302_TOKEN_TXON;
-
-    // Write TX FIFO with all tokens (TXON at end)
-    if (!FUSB302_WriteFIFO(platform, txBuffer, txLen)) {
-        return false;
-    }
-
-    return true;
-}
-
-static bool ReadPacket(FUSB302_Platform_t *platform, FUSB302_Data_t *data, uint8_t *rxBuffer,
-                       int rxBufferSize, bool *isSopPrime) {
-    // Read response from RX FIFO
-    uint8_t rxLen = 0;
-
-    // Read first byte to determine SOP type
-    if (!FUSB302_ReadFIFO(platform, &rxBuffer[rxLen], 1)) {
-        return false;
-    }
-    rxLen++;
-
-    // Check SOP type (upper 3 bits indicate packet type)
-    // 110b_bbbb = SOP' packet (cable)
-    uint8_t sopType = (rxBuffer[0] >> 5) & 0x07;
-    *isSopPrime = (sopType == 0x06); // 110 binary = 6
-
-    // Read the rest of the packet (header + data + CRC)
-    while (rxLen < rxBufferSize) {
-        FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS1);
-        uint8_t rxEmpty = FUSB302_GetDataBit(data, FUSB302_REG_STATUS1, FUSB302_RX_EMPTY);
-        if (rxEmpty) {
-            break;
-        }
-        if (FUSB302_ReadFIFO(platform, &rxBuffer[rxLen], 1)) {
-            rxLen++;
-        } else {
-            break;
-        }
-    }
-
-    // Print received data to debug console
-#ifdef FUSB302_DEBUG_1
-    platform->debugPrint("FUSB302: EMarker data received (SOP type=0x%02X cable=%d %d bytes):",
-                         sopType, *isSopPrime, rxLen);
-    for (int i = 0; i < rxLen; i++) {
-        platform->debugPrint(" %02X", rxBuffer[i]);
-    }
-    platform->debugPrint("\r\n");
-#endif
-
-    return true;
-}
-
-static bool CheckEMarker(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                         FUSB302_CC_Orientation_t ccOrientation, bool *emarkerPresent) {
-    bool ok = true;
-
-    // Flush TX FIFO before sending
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 1);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL0);
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 0);
-
-    // Flush RX FIFO
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 1);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL1);
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 0);
-
-    // Read interrupt register to clear any pending interrupts
-    ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
-
-    // Send discovery identity packet
-    uint8_t txBuffer[16];
-    ok &= SendDiscoverIdentity(platform, data, txBuffer, sizeof(txBuffer));
-
-#ifdef FUSB302_DEBUG_1
-    platform->debugPrint("FUSB302: EMarker Discover Identity sent (SOP')\r\n");
-#endif
-
-    // Wait for cable response
-    // tTransmit max is 195us, cable should respond within tReceive (0.9-1.1ms)
-    // We'll poll for I_ACTIVITY first (BMC activity detected), then I_CRC_CHK
-    bool responseReceived = false;
-    uint8_t rxBuffer[80]; // Max FIFO size
-
-    for (int retry = 0; retry < 20; retry++) {
-        platform->delayUs(500); // 10ms total max
-
-        ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
-        uint8_t i_crc_chk = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_CRC_CHK);
-
-        if (i_crc_chk) {
-#ifdef FUSB302_DEBUG_1
-            platform->debugPrint("FUSB302: Valid CRC packet received\r\n");
-#endif
-
-            // Check for received packet
-            ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS1);
-            uint8_t rxEmpty = FUSB302_GetDataBit(data, FUSB302_REG_STATUS1, FUSB302_RX_EMPTY);
-
-            if (!rxEmpty) {
-                // Read packet
-                bool isSopPrime = false;
-                ok &= ReadPacket(platform, data, rxBuffer, sizeof(rxBuffer), &isSopPrime);
-                if (isSopPrime) {
-                    responseReceived = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    // Check errors
-    if (!ok) {
-        return false;
-    }
-
-    if (!responseReceived) {
-#ifdef FUSB302_DEBUG
-        platform->debugPrint("FUSB302: No EMarker response received\r\n");
-#endif
-    }
-
-    *emarkerPresent = responseReceived;
-
-    return ok;
 }
 
 static bool ConfigureState(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
@@ -533,7 +369,7 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
     // For active cable, ping emarker to update state
     if (activeCable) {
         bool emarkerPresent = false;
-        ok &= CheckEMarker(platform, data, monitoring->ccOrientation, &emarkerPresent);
+        ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, true, &emarkerPresent);
 
         if (!emarkerPresent) {
             monitoring->state = FUSB302_HOST_STATE_DETACHED;

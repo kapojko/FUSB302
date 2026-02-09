@@ -290,6 +290,14 @@ extern "C" {
 #define FUSB302_TOKEN_EOP 0x14
 #define FUSB302_TOKEN_TXOFF 0xFE
 
+// Tokens Used in RxFIFO
+#define FUSB302_RXTOKEN_SOP 0xE0
+#define FUSB302_RXTOKEN_SOP1 0xC0
+#define FUSB302_RXTOKEN_SOP2 0xA0
+#define FUSB302_RXTOKEN_SOP1DB 0x80
+#define FUSB302_RXTOKEN_SOP2DB 0x60
+#define FUSB302_RXTOKEN_BITMASK 0xE0 // only bitmask bits define token
+
 typedef enum FUSB302_HostCurrentMode {
     FUSB302_HOST_CURRENT_MODE_500MA,
     FUSB302_HOST_CURRENT_MODE_1_5A,
@@ -322,13 +330,16 @@ typedef struct FUSB302_Data {
 } FUSB302_Data_t;
 
 bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
-bool FUSB302_ReadControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
+bool FUSB302_ReadControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                                int numRegs);
 bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
-bool FUSB302_WriteControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
+bool FUSB302_WriteControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                                 int numRegs);
 void FUSB302_DebugPrintControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
 bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
-bool FUSB302_ReadStatusDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
+bool FUSB302_ReadStatusDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                               int numRegs);
 void FUSB302_DebugPrintStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
 bool FUSB302_ReadFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);
