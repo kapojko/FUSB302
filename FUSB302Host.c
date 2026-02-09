@@ -1,7 +1,7 @@
 #include "FUSB302Host.h"
 #include "FUSB302/FUSB302.h"
 
-// #define EXPERIMENTAL_EMARKER_READ
+#define EXPERIMENTAL_EMARKER_READ
 
 static bool DiscoverCCOrientation(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
                                   FUSB302_HostMonitoring_t *monitoring) {
@@ -122,11 +122,17 @@ static bool SendDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
 
     // PACKSYM token with 2 bytes (header only, no data objects for Discover Identity)
     // PACKSYM encoding: 0x80 | number_of_bytes (N must be 2-30)
-    txBuffer[txLen++] = FUSB302_TOKEN_PACKSYM | 0x02;
+    txBuffer[txLen++] = FUSB302_TOKEN_PACKSYM | 0x06;
 
     // PD Header: Message Type 1 (Discover Identity), Port Data Role=Source(1), Port Power
-    txBuffer[txLen++] = 0x01;  // Message Type 1, Cable Plug 0
-    txBuffer[txLen++] = 0x05;  // Message ID 0, Source, PD 2.0
+    txBuffer[txLen++] = 0x6F; // Corrected: DataRole=1 (DFP/Source)
+    txBuffer[txLen++] = 0x11; // Corrected: NumDataObj=1, PowerRole=1 (Source)
+
+    // VDM Header (little-endian):
+    txBuffer[txLen++] = 0x01; // Command = 1 (Discover Identity)
+    txBuffer[txLen++] = 0x80; // VDMType=1, Version=0, ObjPos=0, CmdType=0
+    txBuffer[txLen++] = 0x00; // SVID low byte
+    txBuffer[txLen++] = 0xFF; // SVID high byte
 
     // JAM_CRC token - hardware will calculate and insert CRC
     txBuffer[txLen++] = FUSB302_TOKEN_JAM_CRC;
@@ -146,6 +152,13 @@ static bool SendDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
     if (!FUSB302_WriteFIFO(platform, txBuffer, txLen)) {
         return false;
     }
+
+    // Start transmission using TX_START bit (not TXON token)
+    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_START, 1);
+    // if (!FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL0)) {
+    //     return false;
+    // }
+    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_START, 0);
 
     return true;
 }
@@ -211,9 +224,6 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     bool ok = true;
 
     // Setup switches to drive voltage to inactive CC, BMC transmitter and CRC
-    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
-    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
-
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_POWERROLE, 1); // 1: Source if SOP
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_DATAROLE, 1);  // 1: SRC
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_AUTOCRC, 1);   // 1: auto GoodCRC ack
@@ -223,6 +233,8 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 1);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
 
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 1);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
@@ -231,6 +243,8 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 1);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
 
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
         FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 1);
@@ -245,16 +259,25 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_POWER);
 
     // Wait for VCONN to stabilize
-    platform->delayUs(20000);
+    platform->delayUs(10000);
 
     // Flush TX FIFO before sending
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 1);
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL0);
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 0);
 
     // Enable SOP' (SOP prime) packet detection for cable communication and flush RX FIFO
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP1, 1);
+    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP2, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 1);
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL1);
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 0);
+
+    // Enable AUTO_RETRY and set N_RETRIES in Control3
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL3, FUSB302_AUTO_RETRY, 1);
+    FUSB302_SetDataValue(data, FUSB302_REG_CONTROL3, FUSB302_N_RETRIES_BITS,
+                         FUSB302_N_RETRIES_OFFSET, FUSB302_N_RETRIES_3);
+    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL3);
 
     // Enable I_CRC_CHK and I_ACTIVITY interrupts
     // I_ACTIVITY fires when BMC activity is detected (helps detect cable response)
@@ -263,8 +286,13 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_ACTIVITY, 0); // 0: Do not mask
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_MASK);
 
+    // Enable I_TXSENT interrupt
+    FUSB302_SetDataBit(data, FUSB302_REG_MASKA, FUSB302_M_TXSENT, 0); // 0: Do not mask
+    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_MASKA);
+
     // Read interrupt register to clear any pending interrupts
     ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
+    ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPTA);
 
     // Send discovery identity packet
     uint8_t txBuffer[16];
@@ -287,9 +315,18 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
         uint8_t i_activity = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_ACTIVITY);
         uint8_t i_crc_chk = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_CRC_CHK);
 
+        ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPTA);
+        uint8_t i_txsent = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPTA, FUSB302_I_TXSENT);
+
         if (i_activity) {
 #ifdef FUSB302_DEBUG
             platform->debugPrint("FUSB302: BMC activity detected\r\n");
+#endif
+        }
+
+        if (i_txsent) {
+#ifdef FUSB302_DEBUG
+            platform->debugPrint("FUSB302: TX sent (received ack with GoodCRC)\r\n");
 #endif
         }
 
@@ -323,6 +360,9 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_CRC_CHK, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_ACTIVITY, 1);
     FUSB302_WriteControlData(platform, data, FUSB302_REG_MASK);
+
+    FUSB302_SetDataBit(data, FUSB302_REG_MASKA, FUSB302_M_TXSENT, 1);
+    FUSB302_WriteControlData(platform, data, FUSB302_REG_MASKA);
 
     return ok;
 }
