@@ -302,13 +302,8 @@ typedef enum FUSB302_CC_Orientation {
     FUSB302_CC_ORIENTATION_UNKNOWN,
 } FUSB302_CC_Orientation_t;
 
-typedef enum FUSB302_CableType {
-    FUSB302_CABLE_TYPE_NONE,
-    FUSB302_CABLE_TYPE_PASSIVE,
-    FUSB302_CABLE_TYPE_EMARKER,
-    FUSB302_CABLE_TYPE_EMARKER_ONLY,
-    FUSB302_CABLE_TYPE_UNKNOWN,
-} FUSB302_CableType_t;
+typedef uint32_t FUSB302_CycleTime;
+typedef int32_t FUSB302_TimeDiffMs;
 
 typedef struct FUSB302_Platform {
     int (*i2cWriteReg)(uint8_t addr7bit, uint8_t regNum, const uint8_t *data, uint8_t length,
@@ -316,6 +311,9 @@ typedef struct FUSB302_Platform {
     int (*i2cReadReg)(uint8_t addr7bit, uint8_t regNum, uint8_t *data, uint8_t length, int timeout);
     void (*delayUs)(uint32_t us);
     void (*debugPrint)(const char *fmt, ...);
+    FUSB302_TimeDiffMs (*getTimeDiffMs)(FUSB302_CycleTime end, FUSB302_CycleTime start);
+
+    FUSB302_CycleTime invalidCycleTime;
 } FUSB302_Platform_t;
 
 typedef struct FUSB302_Data {
@@ -324,10 +322,13 @@ typedef struct FUSB302_Data {
 } FUSB302_Data_t;
 
 bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
+bool FUSB302_ReadControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
 bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
+bool FUSB302_WriteControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
 void FUSB302_DebugPrintControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
 bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
+bool FUSB302_ReadStatusDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg, int numRegs);
 void FUSB302_DebugPrintStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg);
 
 bool FUSB302_ReadFIFO(FUSB302_Platform_t *platform, uint8_t *data, uint8_t length);

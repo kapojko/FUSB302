@@ -1,18 +1,24 @@
 #include "FUSB302Host.h"
 #include "FUSB302/FUSB302.h"
 
-#define EXPERIMENTAL_EMARKER_READ
-
-static bool DiscoverCCOrientation(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                  FUSB302_HostMonitoring_t *monitoring) {
+static bool DiscoverAttachment(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                               FUSB302_HostCurrentMode_t hostCurrentMode,
+                               FUSB302_CC_Orientation_t *ccOrientation,
+                               FUSB302_HostState_t *state) {
     bool ok = true;
 
     // Set switches for CC1 measure only (no pull-up for CC2 since pull-ups are connected)
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
+    ok &= FUSB302_WriteControlDataSeq(platform, data, FUSB302_REG_SWITCHES0, 2);
 
     platform->delayUs(1000);
 
@@ -44,7 +50,7 @@ static bool DiscoverCCOrientation(FUSB302_Platform_t *platform, FUSB302_Data_t *
     uint8_t expectedBcLvl_Rd;
     uint8_t expectedBcLvl_Ra, expectedBcLvl_Ra_alt;
     uint8_t expectedBcLvl_Nc = FUSB302_BC_LVL_1230MV_MORE;
-    switch (monitoring->hostCurrentMode) {
+    switch (hostCurrentMode) {
     case FUSB302_HOST_CURRENT_MODE_500MA:
         expectedBcLvl_Rd = FUSB302_BC_LVL_200_660MV; // 0.41 V
         expectedBcLvl_Ra = FUSB302_BC_LVL_0_200MV;   // 0.08 V
@@ -65,51 +71,51 @@ static bool DiscoverCCOrientation(FUSB302_Platform_t *platform, FUSB302_Data_t *
     // Check CC orientation and cable type
     if (bc_lvl_cc1 == expectedBcLvl_Rd && bc_lvl_cc2 == expectedBcLvl_Nc) {
         // Device on CC1, passive cable
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC1;
-        monitoring->cableType = FUSB302_CABLE_TYPE_PASSIVE;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC1;
+        *state = FUSB302_HOST_STATE_ATTACHED_DEVICE;
     } else if (bc_lvl_cc2 == expectedBcLvl_Rd && bc_lvl_cc1 == expectedBcLvl_Nc) {
         // Device on CC2, passive cable
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC2;
-        monitoring->cableType = FUSB302_CABLE_TYPE_PASSIVE;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC2;
+        *state = FUSB302_HOST_STATE_ATTACHED_DEVICE;
     } else if (bc_lvl_cc1 == expectedBcLvl_Rd &&
                (bc_lvl_cc2 == expectedBcLvl_Ra || bc_lvl_cc2 == expectedBcLvl_Ra_alt)) {
         // Device on CC1, active cable
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC1;
-        monitoring->cableType = FUSB302_CABLE_TYPE_EMARKER;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC1;
+        *state = FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE;
     } else if (bc_lvl_cc2 == expectedBcLvl_Rd &&
                (bc_lvl_cc1 == expectedBcLvl_Ra || bc_lvl_cc1 == expectedBcLvl_Ra_alt)) {
         // Device on CC2, active cable
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC2;
-        monitoring->cableType = FUSB302_CABLE_TYPE_EMARKER;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC2;
+        *state = FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE;
     } else if (bc_lvl_cc1 == expectedBcLvl_Nc &&
                (bc_lvl_cc2 == expectedBcLvl_Ra || bc_lvl_cc2 == expectedBcLvl_Ra_alt)) {
         // Device should be on CC1, but only active cable connected, no device
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC1;
-        monitoring->cableType = FUSB302_CABLE_TYPE_EMARKER_ONLY;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC1;
+        *state = FUSB302_HOST_STATE_ATTACHED_CABLE;
     } else if (bc_lvl_cc2 == expectedBcLvl_Nc &&
                (bc_lvl_cc1 == expectedBcLvl_Ra || bc_lvl_cc1 == expectedBcLvl_Ra_alt)) {
         // Device should be on CC2, but only active cable connected, no device
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_CC2;
-        monitoring->cableType = FUSB302_CABLE_TYPE_EMARKER_ONLY;
+        *ccOrientation = FUSB302_CC_ORIENTATION_CC2;
+        *state = FUSB302_HOST_STATE_ATTACHED_CABLE;
     } else {
         // Unknown
-        monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
-        monitoring->cableType = FUSB302_CABLE_TYPE_UNKNOWN;
+        *ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
+        *state = FUSB302_HOST_STATE_UNKNOWN;
     }
 
+    // Read interrupt register to clear interrupt
+    ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
+
 #ifdef FUSB302_DEBUG
-    platform->debugPrint(
-        "FUSB302: ccOrientation=%d cableType=%d (bc_lbl_cc1=%d, bc_lbl_cc2=%d)\r\n",
-        monitoring->ccOrientation, monitoring->cableType, bc_lvl_cc1, bc_lvl_cc2);
+    platform->debugPrint("FUSB302: ccOrientation=%d state=%d (bc_lbl_cc1=%d, bc_lbl_cc2=%d)\r\n",
+                         *ccOrientation, *state, bc_lvl_cc1, bc_lvl_cc2);
 #endif
 
     return true;
 }
 
-#ifdef EXPERIMENTAL_EMARKER_READ
-static bool SendDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                  FUSB302_HostMonitoring_t *monitoring, uint8_t *txBuffer,
-                                  int txBufferSize) {
+static bool SendDiscoverIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                                 uint8_t *txBuffer, int txBufferSize) {
     // Build Discover Identity message for cable (SOP')
 
     uint8_t txLen = 0;
@@ -153,19 +159,11 @@ static bool SendDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
         return false;
     }
 
-    // Start transmission using TX_START bit (not TXON token)
-    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_START, 1);
-    // if (!FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL0)) {
-    //     return false;
-    // }
-    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_START, 0);
-
     return true;
 }
 
-static bool ReadDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                  FUSB302_HostMonitoring_t *monitoring, uint8_t *rxBuffer,
-                                  int rxBufferSize) {
+static bool ReadPacket(FUSB302_Platform_t *platform, FUSB302_Data_t *data, uint8_t *rxBuffer,
+                       int rxBufferSize, bool *isSopPrime) {
     // Read response from RX FIFO
     uint8_t rxLen = 0;
 
@@ -178,16 +176,10 @@ static bool ReadDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
     // Check SOP type (upper 3 bits indicate packet type)
     // 110b_bbbb = SOP' packet (cable)
     uint8_t sopType = (rxBuffer[0] >> 5) & 0x07;
-    bool isSopPrime = (sopType == 0x06); // 110 binary = 6
-
-#ifdef FUSB302_DEBUG
-    platform->debugPrint("FUSB302: Received SOP type=0x%02X (%s)\r\n", sopType,
-                         isSopPrime ? "SOP' cable" : "other");
-#endif
+    *isSopPrime = (sopType == 0x06); // 110 binary = 6
 
     // Read the rest of the packet (header + data + CRC)
-    // Try to read up to 30 bytes (max packet size)
-    for (int i = 0; i < 30 && rxLen < rxBufferSize; i++) {
+    while (rxLen < rxBufferSize) {
         FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS1);
         uint8_t rxEmpty = FUSB302_GetDataBit(data, FUSB302_REG_STATUS1, FUSB302_RX_EMPTY);
         if (rxEmpty) {
@@ -201,8 +193,9 @@ static bool ReadDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
     }
 
     // Print received data to debug console
-#ifdef FUSB302_DEBUG
-    platform->debugPrint("FUSB302: EMarker data received (%d bytes):", rxLen);
+#ifdef FUSB302_DEBUG_1
+    platform->debugPrint("FUSB302: EMarker data received (SOP type=0x%02X cable=%d %d bytes):",
+                         sopType, *isSopPrime, rxLen);
     for (int i = 0; i < rxLen; i++) {
         platform->debugPrint(" %02X", rxBuffer[i]);
     }
@@ -212,93 +205,28 @@ static bool ReadDiscoveryIdentity(FUSB302_Platform_t *platform, FUSB302_Data_t *
     return true;
 }
 
-static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                            FUSB302_HostMonitoring_t *monitoring) {
-    // Check that CC orientation is determined and attached type is cable
-    if (monitoring->ccOrientation == FUSB302_CC_ORIENTATION_UNKNOWN ||
-        (monitoring->cableType != FUSB302_CABLE_TYPE_EMARKER &&
-         monitoring->cableType != FUSB302_CABLE_TYPE_EMARKER_ONLY)) {
-        return false;
-    }
-
+static bool CheckEMarker(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                         FUSB302_CC_Orientation_t ccOrientation, bool *emarkerPresent) {
     bool ok = true;
-
-    // Setup switches to drive voltage to inactive CC, BMC transmitter and CRC
-    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_POWERROLE, 1); // 1: Source if SOP
-    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_DATAROLE, 1);  // 1: SRC
-    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_AUTOCRC, 1);   // 1: auto GoodCRC ack
-
-    if (monitoring->ccOrientation == FUSB302_CC_ORIENTATION_CC1) {
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
-
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
-    } else if (monitoring->ccOrientation == FUSB302_CC_ORIENTATION_CC2) {
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 1);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
-
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
-        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 1);
-    }
-
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES1);
-
-    // Enable internal oscillator for BMC/PD communication (required for TX/RX)
-    // The receiver auto-enables it on activity, but for transmission we need it enabled
-    FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_INT_OSC, 1);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_POWER);
-
-    // Wait for VCONN to stabilize
-    platform->delayUs(10000);
 
     // Flush TX FIFO before sending
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 1);
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL0);
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL0, FUSB302_TX_FLUSH, 0);
 
-    // Enable SOP' (SOP prime) packet detection for cable communication and flush RX FIFO
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP1, 1);
-    // FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP2, 1);
+    // Flush RX FIFO
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 1);
     ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL1);
     FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_RX_FLUSH, 0);
 
-    // Enable AUTO_RETRY and set N_RETRIES in Control3
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL3, FUSB302_AUTO_RETRY, 1);
-    FUSB302_SetDataValue(data, FUSB302_REG_CONTROL3, FUSB302_N_RETRIES_BITS,
-                         FUSB302_N_RETRIES_OFFSET, FUSB302_N_RETRIES_3);
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL3);
-
-    // Enable I_CRC_CHK and I_ACTIVITY interrupts
-    // I_ACTIVITY fires when BMC activity is detected (helps detect cable response)
-    // I_CRC_CHK fires when a valid CRC packet is received
-    FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_CRC_CHK, 0);  // 0: Do not mask
-    FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_ACTIVITY, 0); // 0: Do not mask
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_MASK);
-
-    // Enable I_TXSENT interrupt
-    FUSB302_SetDataBit(data, FUSB302_REG_MASKA, FUSB302_M_TXSENT, 0); // 0: Do not mask
-    ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_MASKA);
-
     // Read interrupt register to clear any pending interrupts
     ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
-    ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPTA);
 
     // Send discovery identity packet
     uint8_t txBuffer[16];
-    ok &= SendDiscoveryIdentity(platform, data, monitoring, txBuffer, sizeof(txBuffer));
+    ok &= SendDiscoverIdentity(platform, data, txBuffer, sizeof(txBuffer));
 
-#ifdef FUSB302_DEBUG
+#ifdef FUSB302_DEBUG_1
     platform->debugPrint("FUSB302: EMarker Discover Identity sent (SOP')\r\n");
 #endif
 
@@ -309,41 +237,35 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     uint8_t rxBuffer[80]; // Max FIFO size
 
     for (int retry = 0; retry < 20; retry++) {
-        platform->delayUs(500); // 500us per retry = 10ms total max
+        platform->delayUs(500); // 10ms total max
 
         ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
-        uint8_t i_activity = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_ACTIVITY);
         uint8_t i_crc_chk = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_CRC_CHK);
 
-        ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPTA);
-        uint8_t i_txsent = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPTA, FUSB302_I_TXSENT);
-
-        if (i_activity) {
-#ifdef FUSB302_DEBUG
-            platform->debugPrint("FUSB302: BMC activity detected\r\n");
-#endif
-        }
-
-        if (i_txsent) {
-#ifdef FUSB302_DEBUG
-            platform->debugPrint("FUSB302: TX sent (received ack with GoodCRC)\r\n");
-#endif
-        }
-
         if (i_crc_chk) {
-#ifdef FUSB302_DEBUG
+#ifdef FUSB302_DEBUG_1
             platform->debugPrint("FUSB302: Valid CRC packet received\r\n");
 #endif
+
             // Check for received packet
             ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_STATUS1);
             uint8_t rxEmpty = FUSB302_GetDataBit(data, FUSB302_REG_STATUS1, FUSB302_RX_EMPTY);
 
             if (!rxEmpty) {
-                ok &= ReadDiscoveryIdentity(platform, data, monitoring, rxBuffer, sizeof(rxBuffer));
-                responseReceived = true;
-                break;
+                // Read packet
+                bool isSopPrime = false;
+                ok &= ReadPacket(platform, data, rxBuffer, sizeof(rxBuffer), &isSopPrime);
+                if (isSopPrime) {
+                    responseReceived = true;
+                    break;
+                }
             }
         }
+    }
+
+    // Check errors
+    if (!ok) {
+        return false;
     }
 
     if (!responseReceived) {
@@ -352,24 +274,110 @@ static bool ReadEMarkerData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
 #endif
     }
 
-    // Disable SOP' detection after reading
-    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP1, 0);
-    FUSB302_WriteControlData(platform, data, FUSB302_REG_CONTROL1);
-
-    // Mask interrupts again (restore original state)
-    FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_CRC_CHK, 1);
-    FUSB302_SetDataBit(data, FUSB302_REG_MASK, FUSB302_M_ACTIVITY, 1);
-    FUSB302_WriteControlData(platform, data, FUSB302_REG_MASK);
-
-    FUSB302_SetDataBit(data, FUSB302_REG_MASKA, FUSB302_M_TXSENT, 1);
-    FUSB302_WriteControlData(platform, data, FUSB302_REG_MASKA);
+    *emarkerPresent = responseReceived;
 
     return ok;
 }
-#endif
+
+static bool ConfigureState(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
+                           FUSB302_HostState_t state, FUSB302_CC_Orientation_t ccOrientation) {
+    bool ok = true;
+
+    switch (state) {
+    case FUSB302_HOST_STATE_ATTACHED_DEVICE:
+        // Set switches for monitoring of active CC channel
+        if (ccOrientation == FUSB302_CC_ORIENTATION_CC1) {
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
+        } else if (ccOrientation == FUSB302_CC_ORIENTATION_CC2) {
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
+        } else {
+            return false;
+        }
+        ok &= FUSB302_WriteControlDataSeq(platform, data, FUSB302_REG_SWITCHES0, 2);
+
+        platform->delayUs(1000);
+        break;
+    case FUSB302_HOST_STATE_ATTACHED_CABLE:
+    case FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE:
+        // Set switches for monitoring of active CC channel, provide VCONN and BMC for cable
+        if (ccOrientation == FUSB302_CC_ORIENTATION_CC1) {
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
+        } else if (ccOrientation == FUSB302_CC_ORIENTATION_CC2) {
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 1);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
+            FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 1);
+        } else {
+            return false;
+        }
+        ok &= FUSB302_WriteControlDataSeq(platform, data, FUSB302_REG_SWITCHES0, 2);
+
+        // Wait for VCONN to stabilize
+        platform->delayUs(10000);
+
+        break;
+    case FUSB302_HOST_STATE_INIT:
+    case FUSB302_HOST_STATE_DETACHED:
+    case FUSB302_HOST_STATE_UNKNOWN:
+    default:
+        // Set switches for simultaneous CC1 and CC2 measurement (pullups are interconnected)
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN1, 1);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PU_EN2, 1);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC1, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_VCONN_CC2, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC1, 1);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_MEAS_CC2, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC1, 0);
+        FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_TXCC2, 0);
+        ok &= FUSB302_WriteControlDataSeq(platform, data, FUSB302_REG_SWITCHES0, 2);
+
+        platform->delayUs(1000);
+        break;
+    }
+
+    // Read interrupt register to clear interrupt
+    ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
+
+    return ok;
+}
 
 bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                 FUSB302_HostCurrentMode_t hostCurrentMode,
+                                 FUSB302_HostCurrentMode_t hostCurrentMode, FUSB302_CycleTime time,
                                  FUSB302_HostMonitoring_t *monitoring) {
     // Reset FUSB302
     if (!FUSB302_Reset(platform, data)) {
@@ -394,6 +402,11 @@ bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *d
     // Disable host powerdowns
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN1, 0);
     FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES0, FUSB302_PDWN2, 0);
+
+    // Setup bits used for constructing the GoodCRC acknowledge packet
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_POWERROLE, 1); // 1: Source if SOP
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_DATAROLE, 1);  // 1: SRC
+    FUSB302_SetDataBit(data, FUSB302_REG_SWITCHES1, FUSB302_AUTOCRC, 1);   // 1: auto GoodCRC ack
 
     // Setup comparator to measure CC
     FUSB302_SetDataBit(data, FUSB302_REG_MEASURE, FUSB302_MEAS_VBUS, 0);
@@ -434,16 +447,25 @@ bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *d
     FUSB302_SetDataValue(data, FUSB302_REG_CONTROL0, FUSB302_HOST_CUR_BITS, FUSB302_HOST_CUR_OFFSET,
                          hostCurValue);
 
-    // Mask all interupts except M_COMP_CHNG and M_BC_LVL
+    // Enable SOP' (SOP prime) packet detection for cable communication
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL1, FUSB302_ENSOP1, 1);
+
+    // Enable AUTO_RETRY and set N_RETRIES
+    FUSB302_SetDataBit(data, FUSB302_REG_CONTROL3, FUSB302_AUTO_RETRY, 1);
+    FUSB302_SetDataValue(data, FUSB302_REG_CONTROL3, FUSB302_N_RETRIES_BITS,
+                         FUSB302_N_RETRIES_OFFSET, FUSB302_N_RETRIES_3);
+
+    // Mask all interupts except selected
     FUSB302_SetDataValue(data, FUSB302_REG_MASK, 0xFF, 0,
-                         ~(FUSB302_M_COMP_CHNG | FUSB302_M_BC_LVL));
+                         ~(FUSB302_M_COMP_CHNG | FUSB302_M_BC_LVL | FUSB302_M_CRC_CHK));
     FUSB302_SetDataValue(data, FUSB302_REG_MASKA, 0xFF, 0, 0xFF);
-    FUSB302_SetDataBit(data, FUSB302_REG_MASKB, FUSB302_M_GCRCSENT, 1);
+    FUSB302_SetDataValue(data, FUSB302_REG_MASKA, 0x01, 0, 0x01);
 
     // Setup power
     FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_MEAS_BLOCK, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_RECV_CUR, 1);
     FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_BANDGAP_WAKE, 1);
+    FUSB302_SetDataBit(data, FUSB302_REG_POWER, FUSB302_PWR_INT_OSC, 1);
 
     // Write control registers
     if (!FUSB302_WriteControlData(platform, data, FUSB302_REG_ALL)) {
@@ -454,7 +476,7 @@ bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *d
     monitoring->state = FUSB302_HOST_STATE_INIT;
     monitoring->hostCurrentMode = hostCurrentMode;
     monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
-    monitoring->cableType = FUSB302_CABLE_TYPE_UNKNOWN;
+    monitoring->time = time;
 
 #ifdef FUSB302_DEBUG
     platform->debugPrint("FUSB302: Host monitoring started\r\n");
@@ -464,11 +486,17 @@ bool FUSB302_SetupHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *d
 }
 
 bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
-                                  FUSB302_HostMonitoring_t *monitoring) {
+                                  FUSB302_CycleTime time, FUSB302_HostMonitoring_t *monitoring) {
     // Read interrupt status registr
     if (!FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT)) {
         return false;
     }
+
+    bool ok = true;
+
+    // Save prev state
+    FUSB302_HostState_t prevState = monitoring->state;
+    bool activeCable = FUSB302_IsActiveCableAttached(monitoring);
 
     // Check COMP and BC_LVL interrupt
     uint8_t i_comp_chng = FUSB302_GetDataBit(data, FUSB302_REG_INTERRUPT, FUSB302_I_COMP_CHNG);
@@ -483,63 +511,60 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
         uint8_t comp = FUSB302_GetDataBit(data, FUSB302_REG_STATUS0, FUSB302_COMP);
         if (comp) {
             // 1: Measured CC* input is higher than reference level driven from the MDAC.
-
-            monitoring->state = FUSB302_HOST_STATE_DETACHED;
-            monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
-            monitoring->cableType = FUSB302_CABLE_TYPE_NONE;
-
-#ifdef FUSB302_DEBUG
-            platform->debugPrint("FUSB302: Host monitoring state changed to DETACHED\r\n");
-#endif
-
+            if (activeCable) {
+                monitoring->state = FUSB302_HOST_STATE_ATTACHED_CABLE;
+            } else {
+                monitoring->state = FUSB302_HOST_STATE_DETACHED;
+                monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
+            }
         } else {
             // 0: Measured CC* input is lower than reference level driven from the MDAC.
 
-            monitoring->state = FUSB302_HOST_STATE_ATTACHED;
-
-#ifdef FUSB302_DEBUG
-            platform->debugPrint("FUSB302: Host monitoring state changed to ATTACHED\r\n");
-#endif
-
-            bool ok = true;
-
-            // Backup switches and interrupt mask register
-            uint8_t switches0Value = *FUSB302_GetRegPtr(data, FUSB302_REG_SWITCHES0);
-            uint8_t switches1Value = *FUSB302_GetRegPtr(data, FUSB302_REG_SWITCHES1);
-            uint8_t maskValue = *FUSB302_GetRegPtr(data, FUSB302_REG_MASK);
-
-            // Discover CC orientation and cable type
-            ok &= DiscoverCCOrientation(platform, data, monitoring);
-
-#ifdef EXPERIMENTAL_EMARKER_READ
-            // If cable detected, read EMarker data
-            if (monitoring->cableType == FUSB302_CABLE_TYPE_EMARKER ||
-                monitoring->cableType == FUSB302_CABLE_TYPE_EMARKER_ONLY) {
-                ReadEMarkerData(platform, data, monitoring);
-            }
-#endif
-
-            // Restore registers
-            *FUSB302_GetRegPtr(data, FUSB302_REG_SWITCHES1) = switches1Value;
-            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES1);
-
-            *FUSB302_GetRegPtr(data, FUSB302_REG_SWITCHES0) = switches0Value;
-            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_SWITCHES0);
-
-            *FUSB302_GetRegPtr(data, FUSB302_REG_MASK) = maskValue;
-            ok &= FUSB302_WriteControlData(platform, data, FUSB302_REG_MASK);
-
-            platform->delayUs(1000);
-
-            // Read interrupt status register to clear interrupts
-            ok &= FUSB302_ReadStatusData(platform, data, FUSB302_REG_INTERRUPT);
-
-            // Check error
-            if (!ok) {
-                return false;
+            if (activeCable) {
+                monitoring->state = FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE;
+            } else {
+                // Discover CC orientation and cable type
+                ok &= DiscoverAttachment(platform, data, monitoring->hostCurrentMode,
+                                         &monitoring->ccOrientation, &monitoring->state);
             }
         }
     }
 
+    // For active cable, ping emarker to update state
+    if (activeCable) {
+        bool emarkerPresent = false;
+        ok &= CheckEMarker(platform, data, monitoring->ccOrientation, &emarkerPresent);
+
+        if (!emarkerPresent) {
+            monitoring->state = FUSB302_HOST_STATE_DETACHED;
+            monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
+        }
+    }
+
+    // Check state change
+    if (monitoring->state != prevState) {
+#ifdef FUSB302_DEBUG
+        platform->debugPrint("FUSB302: State changed %d -> %d (CC = %d)\r\n", prevState,
+                             monitoring->state, monitoring->ccOrientation);
+#endif
+
+        ok &= ConfigureState(platform, data, monitoring->state, monitoring->ccOrientation);
+    }
+
+    // Check error
+    if (!ok) {
+        return false;
+    }
+
     return true;
+}
+
+bool FUSB302_IsDeviceAttached(FUSB302_HostMonitoring_t *monitoring) {
+    return monitoring->state == FUSB302_HOST_STATE_ATTACHED_DEVICE ||
+           monitoring->state == FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE;
+}
+
+bool FUSB302_IsActiveCableAttached(FUSB302_HostMonitoring_t *monitoring) {
+    return monitoring->state == FUSB302_HOST_STATE_ATTACHED_CABLE ||
+           monitoring->state == FUSB302_HOST_STATE_ATTACHED_CABLE_DEVICE;
 }

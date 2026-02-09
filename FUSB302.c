@@ -21,6 +21,13 @@ bool FUSB302_ReadControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data,
     return true;
 }
 
+bool FUSB302_ReadControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                                int numRegs) {
+    return platform->i2cReadReg(FUSB302_I2C_ADDR, reg,
+                                &data->controlRegData[reg - FUSB302_REG_CONTROL_START], numRegs,
+                                I2C_TIMEOUT) >= 0;
+}
+
 bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
     // Write register data
     int ret;
@@ -38,6 +45,13 @@ bool FUSB302_WriteControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data
     }
 
     return true;
+}
+
+bool FUSB302_WriteControlDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                                 int numRegs) {
+    return platform->i2cWriteReg(FUSB302_I2C_ADDR, reg,
+                                 &data->controlRegData[reg - FUSB302_REG_CONTROL_START], numRegs,
+                                 I2C_TIMEOUT) >= 0;
 }
 
 void FUSB302_DebugPrintControlData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
@@ -73,6 +87,13 @@ bool FUSB302_ReadStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, 
     }
 
     return true;
+}
+
+bool FUSB302_ReadStatusDataSeq(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg,
+                               int numRegs) {
+    return platform->i2cReadReg(FUSB302_I2C_ADDR, reg,
+                                &data->statusRegData[reg - FUSB302_REG_STATUS_START], numRegs,
+                                I2C_TIMEOUT) >= 0;
 }
 
 void FUSB302_DebugPrintStatusData(FUSB302_Platform_t *platform, FUSB302_Data_t *data, int reg) {
