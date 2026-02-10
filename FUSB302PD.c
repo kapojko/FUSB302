@@ -1,11 +1,13 @@
 #include "FUSB302PD.h"
 
+// #define FUSB302_DEBUG_1
+
 bool FUSB302_SendPacket(FUSB302_Platform_t *platform, FUSB302_Data_t *data, FUSB302_SOP_t sop,
                         uint8_t *packedData, int packedDataLen, uint8_t *txBuffer,
                         int txBufferSize) {
     uint8_t txLen = 0;
 
-    if (sop == FUSB302_SOP) {
+    if (sop == FUSB302_SOP_PRIME) {
         // SOP' token sequence for cable communication
         txBuffer[txLen++] = FUSB302_TOKEN_SOP1; // SOP1
         txBuffer[txLen++] = FUSB302_TOKEN_SOP1; // SOP1
@@ -89,9 +91,9 @@ bool FUSB302_ReadPacket(FUSB302_Platform_t *platform, FUSB302_Data_t *data, uint
     }
 
     // Print received data to debug console
-#ifdef FUSB302_DEBUG_1
-    platform->debugPrint("FUSB302: EMarker data received (SOP type=0x%02X cable=%d %d bytes):",
-                         sopType, *isSopPrime, rxLen);
+#ifdef FUSB302_DEBUG
+    platform->debugPrint(
+        "FUSB302: EMarker data received (SOP type=0x%02X sop=%d %d bytes):", sopType, *sop, rxLen);
     for (int i = 0; i < rxLen; i++) {
         platform->debugPrint(" %02X", rxBuffer[i]);
     }

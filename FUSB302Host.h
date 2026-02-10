@@ -20,6 +20,7 @@ typedef struct FUSB302_HostMonitoring {
     FUSB302_HostState_t state;
     FUSB302_HostCurrentMode_t hostCurrentMode;
     FUSB302_CC_Orientation_t ccOrientation;
+    bool emarkerPresent;
     FUSB302_CycleTime time;
 } FUSB302_HostMonitoring_t;
 
