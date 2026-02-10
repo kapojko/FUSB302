@@ -367,8 +367,18 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
         }
     }
 
-    // Update active cable flag
-    bool activeCable = FUSB302_IsActiveCableAttached(monitoring);
+    // For active cable, ping emarker to update state
+    if (prevActiveCable) {
+        ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, true,
+                                                &monitoring->emarkerPresent, 0);
+
+        if (!monitoring->emarkerPresent) {
+            monitoring->state = FUSB302_HOST_STATE_DETACHED;
+            monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
+
+            platform->debugPrint("FUSB302: Emarker not present, active cable detached\r\n");
+        }
+    }
 
     // Check state change
     if (monitoring->state != prevState) {
@@ -380,22 +390,9 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
         ok &= ConfigureState(platform, data, monitoring->state, monitoring->ccOrientation);
 
         // Check if emarker is present
-        if (activeCable) {
+        if (FUSB302_IsActiveCableAttached(monitoring)) {
             ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, false,
                                                     &monitoring->emarkerPresent, &monitoring->cableIdentity);
-        }
-    } else {
-        // For active cable, ping emarker to update state
-        if (activeCable) {
-            ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, true,
-                                                    &monitoring->emarkerPresent, 0);
-
-            if (!monitoring->emarkerPresent) {
-                monitoring->state = FUSB302_HOST_STATE_DETACHED;
-                monitoring->ccOrientation = FUSB302_CC_ORIENTATION_UNKNOWN;
-
-                platform->debugPrint("FUSB302: Emarker not present, active cable detached\r\n");
-            }
         }
     }
 
