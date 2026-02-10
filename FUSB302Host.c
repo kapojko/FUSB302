@@ -382,13 +382,13 @@ bool FUSB302_UpdateHostMonitoring(FUSB302_Platform_t *platform, FUSB302_Data_t *
         // Check if emarker is present
         if (activeCable) {
             ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, false,
-                                                    &monitoring->emarkerPresent);
+                                                    &monitoring->emarkerPresent, &monitoring->cableIdentity);
         }
     } else {
         // For active cable, ping emarker to update state
         if (activeCable) {
             ok &= FUSB302_HostCableDiscoverIdentity(platform, data, monitoring->ccOrientation, true,
-                                                    &monitoring->emarkerPresent);
+                                                    &monitoring->emarkerPresent, 0);
 
             if (!monitoring->emarkerPresent) {
                 monitoring->state = FUSB302_HOST_STATE_DETACHED;

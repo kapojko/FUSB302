@@ -2,6 +2,7 @@
 #define FUSB302_HOST_H
 
 #include "FUSB302.h"
+#include "FUSB302PD.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +22,7 @@ typedef struct FUSB302_HostMonitoring {
     FUSB302_HostCurrentMode_t hostCurrentMode;
     FUSB302_CC_Orientation_t ccOrientation;
     bool emarkerPresent;
+    FUSB302_PDIdentity_t cableIdentity;
     FUSB302_CycleTime time;
 } FUSB302_HostMonitoring_t;
 
